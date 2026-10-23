@@ -1,5 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { listRepositoriesSchema } from "../schemas/index.js";
+import { listRepositories } from "../github/operations.js";
+import { formatErrorForLLM } from "../errors/index.js";
+import { logger } from "../utils/logging.js";
 
 export function registerListRepositoriesTool(server: McpServer): void {
   server.registerTool(
@@ -16,16 +19,43 @@ export function registerListRepositoriesTool(server: McpServer): void {
       },
     },
     async (input) => {
-      const visibility = input.visibility ?? "all";
-      const perPage = input.perPage ?? 30;
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Operación pendiente de integración con GitHub: listar repositorios (visibilidad: ${visibility}, perPage: ${perPage}).`,
-          },
-        ],
-      };
+      try {
+        const repositories = await listRepositories(input);
+
+        if (repositories.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "No se encontraron repositorios para el usuario autenticado.",
+              },
+            ],
+          };
+        }
+
+        const lines = repositories.map((repository) => {
+          const visibility = repository.private ? "privado" : "público";
+          const description = repository.description ?? "sin descripción";
+          return `- ${repository.fullName} (${visibility}): ${description} - ${repository.url}`;
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Repositorios encontrados (${repositories.length}):\n${lines.join("\n")}`,
+            },
+          ],
+        };
+      } catch (error) {
+        logger.error("Falló list_repositories", {
+          error: error instanceof Error ? error.message : "desconocido",
+        });
+        return {
+          content: [{ type: "text", text: formatErrorForLLM(error) }],
+          isError: true,
+        };
+      }
     },
   );
 }

@@ -1,5 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { listIssuesSchema } from "../schemas/index.js";
+import { listIssues } from "../github/operations.js";
+import { formatErrorForLLM } from "../errors/index.js";
+import { logger } from "../utils/logging.js";
 
 export function registerListIssuesTool(server: McpServer): void {
   server.registerTool(
@@ -16,16 +19,43 @@ export function registerListIssuesTool(server: McpServer): void {
       },
     },
     async (input) => {
-      const state = input.state ?? "open";
-      const perPage = input.perPage ?? 30;
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Operación pendiente de integración con GitHub: listar issues de ${input.owner}/${input.repo} (estado: ${state}, perPage: ${perPage}).`,
-          },
-        ],
-      };
+      try {
+        const issues = await listIssues(input);
+        const state = input.state ?? "open";
+
+        if (issues.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No se encontraron issues con estado '${state}' en ${input.owner}/${input.repo}.`,
+              },
+            ],
+          };
+        }
+
+        const lines = issues.map(
+          (issue) =>
+            `- #${issue.number} [${issue.state}] ${issue.title} (por ${issue.author}) - ${issue.url}`,
+        );
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Issues encontrados (${issues.length}):\n${lines.join("\n")}`,
+            },
+          ],
+        };
+      } catch (error) {
+        logger.error("Falló list_issues", {
+          error: error instanceof Error ? error.message : "desconocido",
+        });
+        return {
+          content: [{ type: "text", text: formatErrorForLLM(error) }],
+          isError: true,
+        };
+      }
     },
   );
 }

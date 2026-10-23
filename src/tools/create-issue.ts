@@ -1,5 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createIssueSchema } from "../schemas/index.js";
+import { createIssue } from "../github/operations.js";
+import { formatErrorForLLM } from "../errors/index.js";
+import { logger } from "../utils/logging.js";
 
 export function registerCreateIssueTool(server: McpServer): void {
   server.registerTool(
@@ -16,14 +19,25 @@ export function registerCreateIssueTool(server: McpServer): void {
       },
     },
     async (input) => {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Operación pendiente de integración con GitHub: crear el issue '${input.title}' en ${input.owner}/${input.repo}.`,
-          },
-        ],
-      };
+      try {
+        const issue = await createIssue(input);
+        const text = [
+          `Issue #${issue.number} creado en ${input.owner}/${input.repo}: "${issue.title}"`,
+          `Estado: ${issue.state}`,
+          `Autor: ${issue.author}`,
+          `URL: ${issue.url}`,
+        ].join("\n");
+
+        return { content: [{ type: "text", text }] };
+      } catch (error) {
+        logger.error("Falló create_issue", {
+          error: error instanceof Error ? error.message : "desconocido",
+        });
+        return {
+          content: [{ type: "text", text: formatErrorForLLM(error) }],
+          isError: true,
+        };
+      }
     },
   );
 }
